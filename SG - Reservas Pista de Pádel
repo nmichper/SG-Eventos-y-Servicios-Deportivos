@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Booking System</title>
+<style>
+body { font-family: Arial; text-align:center; margin-top:40px; }
+form { max-width:400px; margin:auto; }
+input, select, button { width:100%; padding:10px; margin:8px 0; }
+</style>
+</head>
+<body>
+
+<h2>Book Appointment</h2>
+
+<form id="bookingForm">
+  <input type="text" id="name" placeholder="Full Name" required>
+  <input type="email" id="email" placeholder="Your Email" required>
+  <input type="date" id="date" required>
+
+  <select id="time" required>
+    <option value="">Select Time</option>
+  </select>
+
+  <button type="submit">Book Appointment</button>
+</form>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import { getFirestore, collection, addDoc, query, where, getDocs }
+from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+const firebaseConfig = YOUR_FIREBASE_CONFIG;
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+const timeSelect = document.getElementById("time");
+const dateInput = document.getElementById("date");
+
+const morningSlots = ["08:00-09:30","09:30-11:00"];
+const afternoonSlots = ["17:00-18:30","18:30-20:00"];
+
+dateInput.addEventListener("change", async () => {
+
+  timeSelect.innerHTML = '<option value="">Select Time</option>';
+
+  const selectedDate = new Date(dateInput.value);
+  const day = selectedDate.getDay(); // 0=Sun
+
+  let allowedSlots = [];
+
+  // Monday(1), Wednesday(3), Friday(5)
+  if ([1,3,5].includes(day)) {
+    allowedSlots = [...morningSlots, ...afternoonSlots];
+  }
+  // Tuesday(2), Thursday(4)
+  else if ([2,4].includes(day)) {
+    allowedSlots = [...afternoonSlots];
+  }
+  else {
+    alert("Bookings available Monday to Friday only.");
+    dateInput.value = "";
+    return;
+  }
+
+  // Check Firestore for existing bookings
+  for (let slot of allowedSlots) {
+
+    const q = query(
+      collection(db,"bookings"),
+      where("date","==",dateInput.value),
+      where("time","==",slot)
+    );
+
+    const snapshot = await getDocs(q);
+
+    if (snapshot.empty) {
+      let option = document.createElement("option");
+      option.value = slot;
+      option.textContent = slot;
+      timeSelect.appendChild(option);
+    }
+  }
+});
+
+document.getElementById("bookingForm").addEventListener("submit", async (e)=>{
+  e.preventDefault();
+
+  const name = document.getElementById("name").value;
+  const email = document.getElementById("email").value;
+  const date = document.getElementById("date").value;
+  const time = document.getElementById("time").value;
+
+  if(!time){
+    alert("Please select available time.");
+    return;
+  }
+
+  // Double-check before saving
+  const q = query(
+    collection(db,"bookings"),
+    where("date","==",date),
+    where("time","==",time)
+  );
+
+  const snapshot = await getDocs(q);
+
+  if(!snapshot.empty){
+    alert("This slot is already booked.");
+    return;
+  }
+
+  await addDoc(collection(db,"bookings"),{
+    name,email,date,time
+  });
+
+  // Send email via Formspree
+  await fetch("YOUR_FORMSPREE_URL",{
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({
+      name:name,
+      email:email,
+      date:date,
+      time:time
+    })
+  });
+
+  alert("Appointment successfully booked!");
+  e.target.reset();
+});
+</script>
+
+</body>
+</html>
