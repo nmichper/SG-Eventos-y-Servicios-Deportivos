@@ -27,8 +27,11 @@ input, select, button { width:100%; padding:10px; margin:8px 0; }
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getFirestore, collection, addDoc, query, where, getDocs }
-from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { 
+  getFirestore, 
+  doc, 
+  runTransaction 
+} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 const firebaseConfig = YOUR_FIREBASE_CONFIG;
 
@@ -38,8 +41,23 @@ const db = getFirestore(app);
 const timeSelect = document.getElementById("time");
 const dateInput = document.getElementById("date");
 
-const morningSlots = ["08:00-09:30","09:30-11:00"];
-const afternoonSlots = ["17:00-18:30","18:30-20:00"];
+/* ✅ CORRECT SCHEDULE */
+
+const mwfSlots = [
+  "08:30-09:30",
+  "09:30-11:00",
+  "17:00-18:30",
+  "18:30-20:00"
+];
+
+const ttSlots = [
+  "17:00-18:30",
+  "18:30-20:00"
+];
+
+/* ===============================
+   LOAD AVAILABLE SLOTS
+================================ */
 
 dateInput.addEventListener("change", async () => {
 
@@ -50,32 +68,26 @@ dateInput.addEventListener("change", async () => {
 
   let allowedSlots = [];
 
-  // Monday(1), Wednesday(3), Friday(5)
   if ([1,3,5].includes(day)) {
-    allowedSlots = [...morningSlots, ...afternoonSlots];
-  }
-  // Tuesday(2), Thursday(4)
+    allowedSlots = mwfSlots;
+  } 
   else if ([2,4].includes(day)) {
-    allowedSlots = [...afternoonSlots];
-  }
+    allowedSlots = ttSlots;
+  } 
   else {
     alert("Bookings available Monday to Friday only.");
     dateInput.value = "";
     return;
   }
 
-  // Check Firestore for existing bookings
   for (let slot of allowedSlots) {
 
-    const q = query(
-      collection(db,"bookings"),
-      where("date","==",dateInput.value),
-      where("time","==",slot)
-    );
+    const docId = `${dateInput.value}_${slot}`;
+    const bookingRef = doc(db, "bookings", docId);
 
-    const snapshot = await getDocs(q);
+    const snap = await fetchDoc(bookingRef);
 
-    if (snapshot.empty) {
+    if (!snap.exists) {
       let option = document.createElement("option");
       option.value = slot;
       option.textContent = slot;
@@ -84,11 +96,21 @@ dateInput.addEventListener("change", async () => {
   }
 });
 
+/* Helper to safely check doc */
+async function fetchDoc(ref){
+  const { getDoc } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js");
+  return await getDoc(ref);
+}
+
+/* ===============================
+   BOOKING SUBMIT
+================================ */
+
 document.getElementById("bookingForm").addEventListener("submit", async (e)=>{
   e.preventDefault();
 
-  const name = document.getElementById("name").value;
-  const email = document.getElementById("email").value;
+  const name = document.getElementById("name").value.trim();
+  const email = document.getElementById("email").value.trim();
   const date = document.getElementById("date").value;
   const time = document.getElementById("time").value;
 
@@ -97,40 +119,58 @@ document.getElementById("bookingForm").addEventListener("submit", async (e)=>{
     return;
   }
 
-  // Double-check before saving
-  const q = query(
-    collection(db,"bookings"),
-    where("date","==",date),
-    where("time","==",time)
-  );
+  const docId = `${date}_${time}`;
+  const bookingRef = doc(db, "bookings", docId);
 
-  const snapshot = await getDocs(q);
+  try {
 
-  if(!snapshot.empty){
-    alert("This slot is already booked.");
-    return;
+    await runTransaction(db, async (transaction) => {
+
+      const bookingDoc = await transaction.get(bookingRef);
+
+      if (bookingDoc.exists()) {
+        throw "This slot is already booked.";
+      }
+
+      transaction.set(bookingRef, {
+        name,
+        email,
+        date,
+        time,
+        createdAt: new Date()
+      });
+
+    });
+
+    /* ===============================
+       SEND EMAIL TO TWO ADDRESSES
+    ================================= */
+
+    await fetch("YOUR_FORMSPREE_URL",{
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({
+        subject: "New Tennis Court Booking",
+        message: `
+New Booking:
+
+Name: ${name}
+Email: ${email}
+Date: ${date}
+Time: ${time}
+        `,
+        // Formspree supports comma-separated recipients
+        _replyto: email,
+        _cc: "adrirodriguezmartin10@gmail.com,samuelbarlovento@gmail.com"
+      })
+    });
+
+    alert("Appointment successfully booked!");
+    e.target.reset();
+    timeSelect.innerHTML = '<option value="">Select Time</option>';
+
+  } catch (error) {
+    alert(error);
   }
-
-  await addDoc(collection(db,"bookings"),{
-    name,email,date,time
-  });
-
-  // Send email via Formspree
-  await fetch("YOUR_FORMSPREE_URL",{
-    method:"POST",
-    headers:{ "Content-Type":"application/json" },
-    body: JSON.stringify({
-      name:name,
-      email:email,
-      date:date,
-      time:time
-    })
-  });
-
-  alert("Appointment successfully booked!");
-  e.target.reset();
 });
 </script>
-
-</body>
-</html>
